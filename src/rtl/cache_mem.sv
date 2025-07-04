@@ -1,6 +1,6 @@
 module cache_mem(
-  input  logic  clk_i,
-  input  logic  rstn_i,
+  input  logic                    clk_i,
+  input  logic                    rstn_i,
 
   input  logic                    cpu_req_i,
   input  logic [DATA_WIDTH - 1:0] cpu_wdata_i,
@@ -8,14 +8,14 @@ module cache_mem(
   input  logic [ADDR_WIDTH - 1:0] cpu_addr_i,
   output logic [DATA_WIDTH - 1:0] cpu_rdata_o,
   
-  output logic  mem_req_o,
-//  output logic  mem_wdata_i,
-  output logic  mem_we_o,
-  output logic  mem_addr_o,
-  input  logic  mem_rdata_i,
+  output logic                    mem_req_o,
+//  output logic                  mem_wdata_i,
+  output logic                    mem_we_o,
+  output logic [ADDR_WIDTH - 1:0] mem_addr_o,
+  input  logic [DATA_WIDTH - 1:0] mem_rdata_i,
 
-  output logic  hit_o,
-  output logic  miss_o
+  output logic                    hit_o,
+  output logic                    miss_o
 );
 
 localparam DATA_WIDTH   = 32;
