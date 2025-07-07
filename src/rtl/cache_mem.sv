@@ -21,21 +21,14 @@ module cache_mem(
   output logic                    miss_o
 );
 
-localparam DATA_WIDTH   = 32;
-localparam ADDR_WIDTH   = 32;
-
-localparam SET_NUMBER  = 8;
-localparam WORDS_NUMBER = 4;
-
-localparam OFFSET_SIZE  = 2;
-localparam INDEX_SIZE   = $clog2( SET_NUMBER );
-localparam TAG_SIZE     = DATA_WIDTH - INDEX_SIZE - OFFSET_SIZE; 
-
 typedef enum { CACHE_IDLE, 
                CACHE_CHECK_TAG, 
                CACHE_CPU_WRITE,
                CACHE_CPU_READ,
-               CACHE_MEM_READ
+               CACHE_MEM_READ,
+               CACHE_CHECK_VLD,
+               CACHE_REPLACE_LRU,
+               CACHE_WRITE_FREE
 
               } state_t;
 
@@ -65,10 +58,14 @@ logic cpu_write_done;
 logic cpu_read_done;
 logic mem_read_done;
 
+logic mem_rdy;    // Temp name for this variable - used to check are there any free place in current set
+
 ///////////////////////////////////
 
 logic hit;
 logic miss;
+
+logic [HIT_ADDR_SIZE - 1:0] hit_addr_reg; // register to save address of hited word
 
 
 always_comb begin : switch_logic
@@ -77,7 +74,7 @@ always_comb begin : switch_logic
   
     CACHE_IDLE: begin
       if ( cpu_req_i ) begin
-        next_state = CACHE_CHECK_TAG;
+        next_state = CACHE_CHECK_TAG; 
       end
 
       else begin 
@@ -88,8 +85,8 @@ always_comb begin : switch_logic
     CACHE_CHECK_TAG: begin
       if ( hit ) begin
         if ( cpu_we_i ) begin
-          next_state = CACHE_CPU_WRITE;
-        end
+          next_state = CACHE_CPU_WRITE; // In fact, just rewrite memory that already exists
+        end                             // TODO: add another condition to write without cache hit
 
         else begin
           next_state = CACHE_CPU_READ;
@@ -97,13 +94,22 @@ always_comb begin : switch_logic
       end
 
       else begin
-        next_state = CACHE_MEM_READ;
+        if ( cpu_we_i ) begin
+          if ( mem_rdy )
+            next_state = CACHE_WRITE_FREE;
+          else
+            next_state = CACHE_REPLACE_LRU;
+        end
+
+        else begin
+          next_state = CACHE_MEM_READ;
+        end
       end
     end
 
     CACHE_CPU_WRITE: begin
       if ( cpu_write_done ) begin
-        next_state = CACHE_IDLE;
+        next_state = CACHE_IDLE;  // I think it should update data in main memory too. Gonna return to this later
       end
 
       else begin
@@ -123,11 +129,31 @@ always_comb begin : switch_logic
 
     CACHE_MEM_READ: begin
       if ( mem_read_done ) begin
-        next_state = CACHE_IDLE;
+        next_state = CACHE_IDLE;  // Need to be changed to continue CPU reading operation
       end
 
       else begin
         next_state = CACHE_MEM_READ;
+      end
+    end
+
+    CACHE_WRITE_FREE: begin
+      if ( cpu_write_done ) begin
+        next_state = CACHE_IDLE;
+      end
+
+      else begin
+        next_state = CACHE_WRITE_FREE;
+      end
+    end
+
+    CACHE_REPLACE_LRU: begin
+      if ( cpu_write_done ) begin
+        next_state = CACHE_IDLE;
+      end
+
+      else begin
+        next_state = CACHE_REPLACE_LRU;
       end
     end
 
@@ -143,8 +169,47 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
     if ( cur_state == CACHE_CHECK_TAG ) begin
       for ( int w = 0; w < WORDS_NUMBER; w++ ) begin
         if ( ( tag_cache_mem[cpu_index][w] == cpu_tag ) && ( valid_cache_mem[cpu_index][w] ) )
-          hit <= 1'b1;
+          hit          <= 1'b1;
+          hit_addr_reg <= w;
       end
+    end
+    else begin
+      hit <= 1'b0;
+    end
+  end
+end
+
+assign miss = ~hit;
+
+always_ff @( posedge clk_i or negedge rstn_i ) begin : mem_write_stage;
+
+  if ( ~rstn_i ) begin
+    for ( int s = 0; s < SET_NUMBER; s++ ) begin
+      for ( int w = 0; w < WORDS_NUMBER; w++) begin
+        valid_cache_mem[s][w] <= 1'b0;
+        tag_cache_mem  [s][w] <= TAG_SIZE'(0);
+        cpu_write_done        <= 1'b0;
+        cpu_read_done         <= 1'b0;
+      end
+    end
+  end
+
+  else begin
+    cpu_write_done        <= 1'b0;
+    cpu_read_done         <= 1'b0;
+
+    if ( cur_state == CACHE_CPU_WRITE ) begin
+      data_cache_mem[cpu_index][hit_addr_reg] <= cpu_wdata_i;
+      cpu_write_done <= 1'b1;
+    end
+
+    else if ( cur_state == CACHE_CPU_READ ) begin
+      cpu_rdata_o   <= data_cache_mem[cpu_index][hit_addr_reg];
+      cpu_read_done <= 1'b1;
+    end
+
+    else begin
+      // Will be used later for replacing state and another writing state
     end
   end
 end
@@ -159,7 +224,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin : state_switcher
   end
 end
 
-assign hit_o = hit;
-
+assign hit_o  = hit;
+assign miss_o = miss;
 
 endmodule
