@@ -16,6 +16,7 @@ module cache_mem(
   output logic                    mem_we_o,
   output logic [ADDR_WIDTH - 1:0] mem_addr_o,
   input  logic [DATA_WIDTH - 1:0] mem_rdata_i,
+  input  logic                    mem_valid_o,
 
   output logic                    hit_o,
   output logic                    miss_o
@@ -34,13 +35,13 @@ typedef enum { CACHE_IDLE,
 
 state_t cur_state, next_state;
 
-////////////////////////// Memory variables ///////////////////////////////////////
-                                                                                 //
-logic                    valid_cache_mem [0:SET_NUMBER - 1][0:WORDS_NUMBER - 1]; //
-logic [TAG_SIZE - 1:0]   tag_cache_mem   [0:SET_NUMBER - 1][0:WORDS_NUMBER - 1]; //
-logic [DATA_WIDTH - 1:0] data_cache_mem  [0:SET_NUMBER - 1][0:WORDS_NUMBER - 1]; //
-                                                                                 //
-///////////////////////////////////////////////////////////////////////////////////
+////////////////////////// Memory variables /////////////////////////////////////////
+                                                                                   //
+logic [WORDS_NUMBER - 1:0] valid_cache_mem                   [0:SET_NUMBER - 1];   //
+logic [TAG_SIZE - 1:0]     tag_cache_mem   [0:SET_NUMBER - 1][0:WORDS_NUMBER - 1]; //
+logic [DATA_WIDTH - 1:0]   data_cache_mem  [0:SET_NUMBER - 1][0:WORDS_NUMBER - 1]; //
+                                                                                   //
+/////////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////// Splitting input address ////////////////////////////////
                                                                                  //   
@@ -66,6 +67,11 @@ logic hit;
 logic miss;
 
 logic [HIT_ADDR_SIZE - 1:0] hit_addr_reg; // register to save address of hited word
+logic [TAG_SIZE - 1:0] lru_tags_reg [0:SET_NUMBER - 1];
+
+logic [$clog2( WORDS_NUMBER ) - 1:0] free_addr [0:SET_NUMBER - 1];
+logic [SET_NUMBER - 1:0] set_full;
+// logic [SET_NUMBER - 1:0] set_empty;
 
 
 always_comb begin : switch_logic
@@ -94,16 +100,16 @@ always_comb begin : switch_logic
       end
 
       else begin
-        if ( cpu_we_i ) begin
-          if ( mem_rdy )
-            next_state = CACHE_WRITE_FREE;
-          else
-            next_state = CACHE_REPLACE_LRU;
-        end
+        // if ( cpu_we_i ) begin
+        //   if ( mem_rdy )
+        //     next_state = CACHE_WRITE_FREE;
+        //   else
+        //     next_state = CACHE_REPLACE_LRU;
+        // end
 
-        else begin
+        // else begin
           next_state = CACHE_MEM_READ;
-        end
+        // end
       end
     end
 
@@ -137,25 +143,25 @@ always_comb begin : switch_logic
       end
     end
 
-    CACHE_WRITE_FREE: begin
-      if ( cpu_write_done ) begin
-        next_state = CACHE_IDLE;
-      end
+    // CACHE_WRITE_FREE: begin
+    //   if ( cpu_write_done ) begin
+    //     next_state = CACHE_IDLE;
+    //   end
 
-      else begin
-        next_state = CACHE_WRITE_FREE;
-      end
-    end
+    //   else begin
+    //     next_state = CACHE_WRITE_FREE;
+    //   end
+    // end
 
-    CACHE_REPLACE_LRU: begin
-      if ( cpu_write_done ) begin
-        next_state = CACHE_IDLE;
-      end
+    // CACHE_REPLACE_LRU: begin
+    //   if ( cpu_write_done ) begin
+    //     next_state = CACHE_IDLE;
+    //   end
 
-      else begin
-        next_state = CACHE_REPLACE_LRU;
-      end
-    end
+    //   else begin
+    //     next_state = CACHE_REPLACE_LRU;
+    //   end
+    // end
 
   endcase
 end
@@ -174,7 +180,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
       end
     end
     else begin
-      hit <= 1'b0;
+      hit <= 1'b0;  // if valid but tag wrong should be send to replace state
     end
   end
 end
@@ -199,8 +205,22 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin : mem_write_stage;
     cpu_read_done         <= 1'b0;
 
     if ( cur_state == CACHE_CPU_WRITE ) begin
-      data_cache_mem[cpu_index][hit_addr_reg] <= cpu_wdata_i;
-      cpu_write_done <= 1'b1;
+      if ( hit ) begin
+        data_cache_mem [cpu_index][hit_addr_reg] <= cpu_wdata_i;
+        tag_cache_mem  [cpu_index][hit_addr_reg] <= cpu_tag;
+        valid_cache_mem[cpu_index][hit_addr_reg] <= 1'b1;
+        cpu_write_done <= 1'b1;
+      end else if ( ~set_full[cpu_index] ) begin
+        data_cache_mem [cpu_index][free_addr[cpu_index]] <= cpu_wdata_i;
+        tag_cache_mem  [cpu_index][free_addr[cpu_index]] <= cpu_tag;
+        valid_cache_mem[cpu_index][free_addr[cpu_index]] <= 1'b1;
+        cpu_write_done <= 1'b1;
+      end else begin
+        data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= cpu_wdata_i; // problem is that we need to wait 1 cycle
+        tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
+        valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
+        cpu_write_done <= 1'b1;
+      end
     end
 
     else if ( cur_state == CACHE_CPU_READ ) begin
@@ -208,11 +228,21 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin : mem_write_stage;
       cpu_read_done <= 1'b1;
     end
 
-    else begin
-      // Will be used later for replacing state and another writing state
+    else if ( cur_state == CACHE_MEM_READ ) begin
+      if ( ~mem_valid_o ) begin
+        mem_addr_o <= cpu_addr_i;
+        mem_req_o  <= 1'b1;
+        mem_we_o   <= 1'b0;
+      end else begin
+        data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= mem_rdata_i;
+        tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
+        valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
+        cpu_rdata_o                                         <= mem_rdata_i;
+      end
     end
   end
 end
+
 
 always_ff @( posedge clk_i or negedge rstn_i ) begin : state_switcher
   if ( ~rstn_i ) begin
@@ -224,7 +254,32 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin : state_switcher
   end
 end
 
+genvar i;
+generate
+  for ( i = 0; i < SET_NUMBER; i = i + 1 ) begin
+    lru_addr_block (
+      .clk_i      ( clk_i ),
+      .rstn_i     ( rstn_i ),
+
+      .cpu_req_i  ( cpu_req_i ),
+      .cpu_tag_i  ( cpu_tag   ),
+
+      .replace_tag_o  ( lru_tags_reg[i] )
+    );
+    
+    onehot_decoder (
+      .data_i     ( valid_cache_mem[i] ),
+      .data_o     ( free_addr[i] ),
+      .set_full_o ( set_full[i] )
+    );
+  end
+endgenerate
+
 assign hit_o  = hit;
 assign miss_o = miss;
 
+
+
 endmodule
+
+

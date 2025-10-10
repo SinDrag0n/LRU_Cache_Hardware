@@ -7,7 +7,6 @@ module lru_addr_block (
  
   input  logic                  cpu_req_i,
   input  logic [TAG_SIZE - 1:0] cpu_tag_i,
-  input  logic [TAG_SIZE - 1:0] tags_array_i [0:WORDS_NUMBER - 1], 
 
   output logic [TAG_SIZE - 1:0] replace_tag_o
 );
