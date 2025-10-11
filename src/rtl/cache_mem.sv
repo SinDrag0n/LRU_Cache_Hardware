@@ -164,7 +164,7 @@ always_comb begin: switch_logic
     // end
 
   endcase
-end
+end: switch_logic
 
 always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
   if ( ~rstn_i ) begin
@@ -183,7 +183,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
       hit <= 1'b0;  // if valid but tag wrong should be send to replace state
     end
   end
-end
+end: hit_check
 
 assign miss = ~hit;
 
@@ -240,7 +240,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage;
         cpu_rdata_o                                         <= mem_rdata_i;
       end
     end
-  end
+end: mem_write_stage
 
 
 
