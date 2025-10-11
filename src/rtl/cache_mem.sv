@@ -72,10 +72,10 @@ logic [TAG_SIZE - 1:0]      lru_tags_reg [0:SET_NUMBER - 1];
 logic [$clog2( WORDS_NUMBER ) - 1:0] free_addr [0:SET_NUMBER - 1];
 logic [SET_NUMBER - 1:0]             set_full;
 // logic [SET_NUMBER - 1:0] set_empty;
-
+logic mem_valid;
 
 always_comb begin: switch_logic
-  next_state = CACHE_IDLE;
+  // next_state = CACHE_IDLE;
   case ( cur_state )
   
     CACHE_IDLE: begin
@@ -162,7 +162,8 @@ always_comb begin: switch_logic
     //     next_state = CACHE_REPLACE_LRU;
     //   end
     // end
-
+    default:
+      next_state = CACHE_IDLE;
   endcase
 end: switch_logic
 
@@ -200,7 +201,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage;
     cpu_read_done   <= 1'b0;
   end
 
-  else 
+  else begin
     cpu_write_done  <= 1'b0;
     cpu_read_done   <= 1'b0;
 
@@ -229,7 +230,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage;
     end
 
     else if ( cur_state == CACHE_MEM_READ ) begin
-      if ( ~mem_valid_o ) begin
+      if ( ~mem_valid ) begin
         mem_addr_o <= cpu_addr_i;
         mem_req_o  <= 1'b1;
         mem_we_o   <= 1'b0;
@@ -240,6 +241,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage;
         cpu_rdata_o                                         <= mem_rdata_i;
       end
     end
+  end
 end: mem_write_stage
 
 
