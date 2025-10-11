@@ -8,8 +8,8 @@ interface ahb_bus;
 
   logic [ADDR_WIDTH - 1:0]   haddr;
   logic [HBURST_WIDTH - 1:0] hburst;
-  logic [2:0]                hsize;
-  logic [1:0]                htrans;
+  logic [HSIZE_WIDTH - 1:0]  hsize;
+  logic [HTRANS_WIDTH:0]     htrans;
   logic [DATA_WIDTH - 1:0]   hwdata;
   logic [STRB_WIDTH - 1:0]   hwstrb;
   logic                      hwrite;

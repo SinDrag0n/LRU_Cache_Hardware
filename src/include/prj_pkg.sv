@@ -6,7 +6,8 @@ localparam int ADDR_WIDTH    = 32;
 localparam int HBURST_WIDTH  = 1;
 localparam int DATA_WIDTH    = 32;
 localparam int STRB_WIDTH    = DATA_WIDTH / 8;
-
+localparam int HSIZE_WIDTH   = 1;
+localparam int HTRANS_WIDTH  = 2;
 /// Cache memory parameters ///
 
 localparam int SET_NUMBER    = 8;
