@@ -9,7 +9,7 @@ module onehot_decoder (
 );
 
 logic [WORDS_NUMBER - 1:0] lsb_zero;
-assign lsb_zero =  ( data_i & ~( data_i + 1'b1 ) ) << 1'b1; // shift to left to find onehot vector of first zero from most significant active bit
+assign lsb_zero = ( data_i & ~( data_i + 1'b1 ) ) << 1'b1;  // shift to left to find onehot vector of first zero from most significant active bit
 
 always_comb begin
   data_o = $clog2( WORDS_NUMBER )'(0);
@@ -20,7 +20,7 @@ always_comb begin
   end
 end
 
-assign set_full_o  =  &data_i;
+assign set_full_o = &data_i;
 // assign set_empty_o = ~|data_i;
 
 endmodule

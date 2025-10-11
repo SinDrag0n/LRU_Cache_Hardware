@@ -1,7 +1,7 @@
 `include "../include/prj_pkg.sv"
 import prj_pkg::*;
 
-module cache_mem(
+module cache_mem (
   input  logic                    clk_i,
   input  logic                    rstn_i,
 
@@ -12,11 +12,11 @@ module cache_mem(
   output logic [DATA_WIDTH - 1:0] cpu_rdata_o,
   
   output logic                    mem_req_o,
-//  output logic                  mem_wdata_i,
+//  output logic                  mem_wdata_o,
   output logic                    mem_we_o,
   output logic [ADDR_WIDTH - 1:0] mem_addr_o,
   input  logic [DATA_WIDTH - 1:0] mem_rdata_i,
-  input  logic                    mem_valid_o,
+  input  logic                    mem_valid_i,
 
   output logic                    hit_o,
   output logic                    miss_o
@@ -30,10 +30,10 @@ typedef enum { CACHE_IDLE,
                CACHE_CHECK_VLD,
                CACHE_REPLACE_LRU,
                CACHE_WRITE_FREE
-
               } state_t;
 
-state_t cur_state, next_state;
+state_t cur_state;
+state_t next_state;
 
 ////////////////////////// Memory variables /////////////////////////////////////////
                                                                                    //
@@ -67,14 +67,14 @@ logic hit;
 logic miss;
 
 logic [HIT_ADDR_SIZE - 1:0] hit_addr_reg; // register to save address of hited word
-logic [TAG_SIZE - 1:0] lru_tags_reg [0:SET_NUMBER - 1];
+logic [TAG_SIZE - 1:0]      lru_tags_reg [0:SET_NUMBER - 1];
 
 logic [$clog2( WORDS_NUMBER ) - 1:0] free_addr [0:SET_NUMBER - 1];
-logic [SET_NUMBER - 1:0] set_full;
+logic [SET_NUMBER - 1:0]             set_full;
 // logic [SET_NUMBER - 1:0] set_empty;
 
 
-always_comb begin : switch_logic
+always_comb begin: switch_logic
   next_state = CACHE_IDLE;
   case ( cur_state )
   
@@ -173,7 +173,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
 
   else begin
     if ( cur_state == CACHE_CHECK_TAG ) begin
-      for ( int w = 0; w < WORDS_NUMBER; w++ ) begin
+      for ( int w = 0; w < WORDS_NUMBER; w = w + 1 ) begin
         if ( ( tag_cache_mem[cpu_index][w] == cpu_tag ) && ( valid_cache_mem[cpu_index][w] ) )
           hit          <= 1'b1;
           hit_addr_reg <= w;
@@ -187,39 +187,39 @@ end
 
 assign miss = ~hit;
 
-always_ff @( posedge clk_i or negedge rstn_i ) begin : mem_write_stage;
+always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage;
 
   if ( ~rstn_i ) begin
-    for ( int s = 0; s < SET_NUMBER; s++ ) begin
-      for ( int w = 0; w < WORDS_NUMBER; w++) begin
+    for ( int s = 0; s < SET_NUMBER; s = s + 1 ) begin
+      for ( int w = 0; w < WORDS_NUMBER; w = w + 1 ) begin
         valid_cache_mem[s][w] <= 1'b0;
         tag_cache_mem  [s][w] <= TAG_SIZE'(0);
-        cpu_write_done        <= 1'b0;
-        cpu_read_done         <= 1'b0;
       end
     end
+    cpu_write_done  <= 1'b0;
+    cpu_read_done   <= 1'b0;
   end
 
-  else begin
-    cpu_write_done        <= 1'b0;
-    cpu_read_done         <= 1'b0;
+  else 
+    cpu_write_done  <= 1'b0;
+    cpu_read_done   <= 1'b0;
 
     if ( cur_state == CACHE_CPU_WRITE ) begin
       if ( hit ) begin
         data_cache_mem [cpu_index][hit_addr_reg] <= cpu_wdata_i;
         tag_cache_mem  [cpu_index][hit_addr_reg] <= cpu_tag;
         valid_cache_mem[cpu_index][hit_addr_reg] <= 1'b1;
-        cpu_write_done <= 1'b1;
+        cpu_write_done                           <= 1'b1;
       end else if ( ~set_full[cpu_index] ) begin
         data_cache_mem [cpu_index][free_addr[cpu_index]] <= cpu_wdata_i;
         tag_cache_mem  [cpu_index][free_addr[cpu_index]] <= cpu_tag;
         valid_cache_mem[cpu_index][free_addr[cpu_index]] <= 1'b1;
-        cpu_write_done <= 1'b1;
+        cpu_write_done                                   <= 1'b1;
       end else begin
         data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= cpu_wdata_i; // problem is that we need to wait 1 cycle
         tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
         valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
-        cpu_write_done <= 1'b1;
+        cpu_write_done                                      <= 1'b1;
       end
     end
 
@@ -241,7 +241,7 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin : mem_write_stage;
       end
     end
   end
-end
+
 
 
 always_ff @( posedge clk_i or negedge rstn_i ) begin : state_switcher
@@ -258,28 +258,24 @@ genvar i;
 generate
   for ( i = 0; i < SET_NUMBER; i = i + 1 ) begin
     lru_addr_block (
-      .clk_i      ( clk_i ),
-      .rstn_i     ( rstn_i ),
+      .clk_i          ( clk_i ),
+      .rstn_i         ( rstn_i ),
 
-      .cpu_req_i  ( cpu_req_i ),
-      .cpu_tag_i  ( cpu_tag   ),
+      .cpu_req_i      ( cpu_req_i ),
+      .cpu_tag_i      ( cpu_tag   ),
 
       .replace_tag_o  ( lru_tags_reg[i] )
     );
     
     onehot_decoder (
       .data_i     ( valid_cache_mem[i] ),
-      .data_o     ( free_addr[i] ),
-      .set_full_o ( set_full[i] )
+      .data_o     ( free_addr[i]       ),
+      .set_full_o ( set_full[i]        )
     );
   end
 endgenerate
 
 assign hit_o  = hit;
 assign miss_o = miss;
-
-
-
 endmodule
-
 
