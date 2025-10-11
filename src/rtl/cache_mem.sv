@@ -69,8 +69,6 @@ logic cpu_write_done;
 logic cpu_read_done;
 logic mem_read_done;
 
-logic mem_rdy;    // Temp name for this variable - used to check are there any free place in current set
-
 ///////////////////////////////////
 
 logic hit;
@@ -81,8 +79,12 @@ logic [TAG_SIZE - 1:0]      lru_tags_reg [0:SET_NUMBER - 1];
 
 logic [$clog2( WORDS_NUMBER ) - 1:0] free_addr [0:SET_NUMBER - 1];
 logic [SET_NUMBER - 1:0]             set_full;
+logic [SET_NUMBER - 1:0]             set_requested;   
 // logic [SET_NUMBER - 1:0] set_empty;
-logic mem_valid;
+
+assign miss          = ~hit;
+assign mem_read_done = mem_valid_i; 
+
 
 always_comb begin: switch_logic
   case ( cur_state )
@@ -167,8 +169,6 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: hit_check
   end
 end: hit_check
 
-assign miss = ~hit;
-
 always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage
 
   if ( ~rstn_i ) begin
@@ -188,17 +188,17 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage
 
     if ( cur_state == CACHE_CPU_WRITE ) begin
       if ( hit ) begin
-        data_cache_mem [cpu_index][hit_addr_reg] <= cpu_wdata_i;
-        tag_cache_mem  [cpu_index][hit_addr_reg] <= cpu_tag;
-        valid_cache_mem[cpu_index][hit_addr_reg] <= 1'b1;
-        cpu_write_done                           <= 1'b1;
+        data_cache_mem [cpu_index][hit_addr_reg]            <= cpu_wdata_i;  // Writing value into cell if cache hit happened
+        tag_cache_mem  [cpu_index][hit_addr_reg]            <= cpu_tag;
+        valid_cache_mem[cpu_index][hit_addr_reg]            <= 1'b1;
+        cpu_write_done                                      <= 1'b1;
       end else if ( ~set_full[cpu_index] ) begin
-        data_cache_mem [cpu_index][free_addr[cpu_index]] <= cpu_wdata_i;
-        tag_cache_mem  [cpu_index][free_addr[cpu_index]] <= cpu_tag;
-        valid_cache_mem[cpu_index][free_addr[cpu_index]] <= 1'b1;
-        cpu_write_done                                   <= 1'b1;
+        data_cache_mem [cpu_index][free_addr[cpu_index]]    <= cpu_wdata_i;  // Writing into free cell of cache in case some of them free
+        tag_cache_mem  [cpu_index][free_addr[cpu_index]]    <= cpu_tag;
+        valid_cache_mem[cpu_index][free_addr[cpu_index]]    <= 1'b1;
+        cpu_write_done                                      <= 1'b1;
       end else begin
-        data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= cpu_wdata_i; // problem is that we need to wait 1 cycle
+        data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= cpu_wdata_i;  // Overwriting lru cell in set in case of cache miss
         tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
         valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
         cpu_write_done                                      <= 1'b1;
@@ -206,26 +206,31 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: mem_write_stage
     end
 
     else if ( cur_state == CACHE_CPU_READ ) begin
-      cpu_rdata_ff  <= data_cache_mem[cpu_index][hit_addr_reg];
+      cpu_rdata_ff  <= data_cache_mem[cpu_index][hit_addr_reg];  // Reading hitted cell from set
       cpu_read_done <= 1'b1;
     end
 
     else if ( cur_state == CACHE_MEM_READ ) begin
-      if ( ~mem_read_done ) begin
+      if ( ~mem_read_done ) begin  // In case of cache miss during reading asking for this data from main memory
         mem_addr_ff <= cpu_addr_i;
         mem_req_o   <= 1'b1;
         mem_we_o    <= 1'b0;
       end else begin
-        data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= mem_rdata_i;
-        tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
-        valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
-        cpu_rdata_ff                                        <= mem_rdata_i;
+        if ( ~set_full[cpu_index] ) begin  // Memory data goes to empty cell in set
+          data_cache_mem [cpu_index][free_addr[cpu_index]]    <= mem_rdata_i;  // Data from memory replaces oldest used cell
+          tag_cache_mem  [cpu_index][free_addr[cpu_index]]    <= cpu_tag;
+          valid_cache_mem[cpu_index][free_addr[cpu_index]]    <= 1'b1;
+          cpu_rdata_ff                                        <= mem_rdata_i;  // Also data from memory goes directly to memory bus
+        end else begin  // in case if set is full using LRU algorithm to replace cell
+          data_cache_mem [cpu_index][lru_tags_reg[cpu_index]] <= mem_rdata_i;  // Data from memory replaces oldest used cell
+          tag_cache_mem  [cpu_index][lru_tags_reg[cpu_index]] <= cpu_tag;
+          valid_cache_mem[cpu_index][lru_tags_reg[cpu_index]] <= 1'b1;
+          cpu_rdata_ff                                        <= mem_rdata_i;  // Also data from memory goes directly to memory bus
+        end
       end
     end
   end
 end: mem_write_stage
-
-
 
 always_ff @( posedge clk_i or negedge rstn_i ) begin: state_switcher
   if ( ~rstn_i ) begin
@@ -237,12 +242,18 @@ always_ff @( posedge clk_i or negedge rstn_i ) begin: state_switcher
   end
 end: state_switcher
 
+generate
+  for ( genvar i = 0; i < SET_NUMBER; i = i + 1 ) begin
+    assign set_requested[i] = cpu_index == i; 
+  end
+endgenerate
+
 lru_addr_block lru_addr_block_inst [SET_NUMBER - 1:0] (
-  .clk_i          ( clk_i ),
-  .rstn_i         ( rstn_i ),
-  .cpu_req_i      ( cpu_req_i ),
-  .cpu_tag_i      ( cpu_tag   ),
-  .replace_tag_o  ( lru_tags_reg )
+  .clk_i          ( clk_i                                        ),
+  .rstn_i         ( rstn_i                                       ),
+  .cpu_req_i      ( ( {SET_NUMBER{cpu_req_i}} ) & set_requested  ),
+  .cpu_tag_i      ( cpu_tag                                      ),
+  .replace_tag_o  ( lru_tags_reg                                 )
 );
   
 onehot_decoder onehot_decoder_inst [SET_NUMBER - 1:0] (
@@ -251,10 +262,8 @@ onehot_decoder onehot_decoder_inst [SET_NUMBER - 1:0] (
   .set_full_o ( set_full        )
 );
 
-
 assign hit_o  = hit;
 assign miss_o = miss;
-
 
 endmodule
 
